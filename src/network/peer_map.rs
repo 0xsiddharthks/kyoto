@@ -25,7 +25,7 @@ use crate::{
     chain::HeightMonitor,
     default_port_from_network,
     network::{dns::bootstrap_dns, error::PeerError, peer::Peer, PeerId, PeerTimeoutConfig},
-    BlockType, Dialog, TrustedPeer,
+    BlockType, Dialog, DnsPeer, TrustedPeer,
 };
 
 use super::{AddressBook, ConnectionType, MainThreadMessage, PeerThreadMessage};
@@ -57,6 +57,8 @@ pub(crate) struct PeerMap {
     db: Arc<Mutex<AddressBook>>,
     connector: ConnectionType,
     whitelist: Whitelist,
+    dns_peers: Vec<DnsPeer>,
+    dns_peer_index: usize,
     pub(crate) whitelist_only: bool,
     dialog: Arc<Dialog>,
     timeout_config: PeerTimeoutConfig,
@@ -69,6 +71,7 @@ impl PeerMap {
         network: Network,
         block_type: BlockType,
         whitelist: Whitelist,
+        dns_peers: Vec<DnsPeer>,
         whitelist_only: bool,
         dialog: Arc<Dialog>,
         connection_type: ConnectionType,
@@ -86,6 +89,8 @@ impl PeerMap {
             db: Arc::new(Mutex::new(AddressBook::new())),
             connector: connection_type,
             whitelist,
+            dns_peers,
+            dns_peer_index: 0,
             whitelist_only,
             dialog,
             timeout_config,
@@ -232,9 +237,9 @@ impl PeerMap {
         false
     }
 
-    // Pull a peer from the configuration if we have one. If not, select a random peer from the database,
-    // as long as it is not from the same netgroup. If there are no peers in the database, try DNS.
-    // When `whitelist_only` is set, only peers from the whitelist are used.
+    // Pull a peer from the configuration if we have one. If not, try resolving DNS peers.
+    // If neither are available, select from the address book or bootstrap with DNS seeds.
+    // When `whitelist_only` is set, only whitelist and DNS peers are used.
     pub async fn next_peer(&mut self) -> Option<Record> {
         if let Some(peer) = self.whitelist.pop() {
             crate::debug!("Using a configured peer");
@@ -243,6 +248,30 @@ impl PeerMap {
                 .unwrap_or(default_port_from_network(&self.network));
             let record = Record::new(peer.address(), port, peer.known_services, &LOCAL_HOST);
             return Some(record);
+        }
+        // Try resolving DNS peers (round-robin through all of them).
+        if !self.dns_peers.is_empty() {
+            let attempts = self.dns_peers.len();
+            for _ in 0..attempts {
+                let idx = self.dns_peer_index % self.dns_peers.len();
+                self.dns_peer_index = self.dns_peer_index.wrapping_add(1);
+                let dns_peer = &self.dns_peers[idx];
+                let host_port = format!("{}:{}", dns_peer.hostname, dns_peer.port);
+                crate::debug!(format!("Resolving DNS peer: {host_port}"));
+                if let Ok(mut addrs) = tokio::net::lookup_host(&host_port).await {
+                    if let Some(addr) = addrs.next() {
+                        crate::debug!(format!("Resolved {host_port} to {addr}"));
+                        let ip = match addr.ip() {
+                            IpAddr::V4(ip) => AddrV2::Ipv4(ip),
+                            IpAddr::V6(ip) => AddrV2::Ipv6(ip),
+                        };
+                        let record =
+                            Record::new(ip, addr.port(), ServiceFlags::NONE, &LOCAL_HOST);
+                        return Some(record);
+                    }
+                }
+                crate::debug!(format!("Failed to resolve DNS peer: {host_port}"));
+            }
         }
         if self.whitelist_only {
             return None;

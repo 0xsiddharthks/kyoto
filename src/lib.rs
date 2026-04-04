@@ -301,6 +301,33 @@ impl From<SocketAddr> for TrustedPeer {
     }
 }
 
+/// A peer identified by hostname, resolved via DNS on each connection attempt.
+///
+/// Unlike [`TrustedPeer`] (which stores a resolved IP), a `DnsPeer` stores a
+/// hostname that is re-resolved every time the node needs to connect. This is
+/// useful in environments where the peer's IP may change (e.g., Kubernetes
+/// services, dynamic DNS).
+///
+/// DNS peers are never consumed from the peer list — they persist and are
+/// re-resolved on every reconnection attempt.
+#[derive(Debug, Clone)]
+pub struct DnsPeer {
+    /// The hostname to resolve (e.g., `"bitcoind.default.svc.cluster.local"`).
+    pub hostname: String,
+    /// The port to connect to.
+    pub port: u16,
+}
+
+impl DnsPeer {
+    /// Create a new DNS-based peer.
+    pub fn new(hostname: impl Into<String>, port: u16) -> Self {
+        Self {
+            hostname: hostname.into(),
+            port,
+        }
+    }
+}
+
 /// Route network traffic through a Socks5 proxy, typically used by a Tor daemon.
 #[derive(Debug, Clone)]
 pub struct Socks5Proxy(SocketAddr);
@@ -337,6 +364,7 @@ enum NodeState {
 struct Config {
     required_peers: u8,
     white_list: Vec<TrustedPeer>,
+    dns_peers: Vec<DnsPeer>,
     whitelist_only: bool,
     data_path: Option<PathBuf>,
     chain_state: Option<ChainState>,
@@ -351,6 +379,7 @@ impl Default for Config {
         Self {
             required_peers: 1,
             white_list: Default::default(),
+            dns_peers: Default::default(),
             whitelist_only: false,
             data_path: Default::default(),
             chain_state: Default::default(),

@@ -6,7 +6,7 @@ use super::{client::Client, node::Node};
 use crate::chain::ChainState;
 use crate::network::ConnectionType;
 use crate::{BlockType, Config, FilterType};
-use crate::{Socks5Proxy, TrustedPeer};
+use crate::{DnsPeer, Socks5Proxy, TrustedPeer};
 
 const MIN_PEERS: u8 = 1;
 const MAX_PEERS: u8 = 15;
@@ -65,6 +65,20 @@ impl Builder {
     /// Add a preferred peer to try to connect to.
     pub fn add_peer(mut self, trusted_peer: impl Into<TrustedPeer>) -> Self {
         self.config.white_list.push(trusted_peer.into());
+        self
+    }
+
+    /// Add a peer identified by hostname. The hostname is resolved via DNS on each
+    /// connection attempt, so if the IP changes between reconnections the node will
+    /// follow it. DNS peers are never consumed — they persist across reconnections.
+    pub fn add_dns_peer(mut self, peer: DnsPeer) -> Self {
+        self.config.dns_peers.push(peer);
+        self
+    }
+
+    /// Add multiple DNS-based peers.
+    pub fn add_dns_peers(mut self, peers: impl IntoIterator<Item = DnsPeer>) -> Self {
+        self.config.dns_peers.extend(peers);
         self
     }
 

@@ -71,6 +71,7 @@ impl Node {
         let Config {
             required_peers,
             white_list,
+            dns_peers,
             whitelist_only,
             data_path: _,
             chain_state,
@@ -97,6 +98,7 @@ impl Node {
             network,
             block_type,
             white_list,
+            dns_peers,
             whitelist_only,
             Arc::clone(&dialog),
             connection_type,
